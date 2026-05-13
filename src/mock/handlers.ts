@@ -4,6 +4,17 @@ import { regions } from './data/regions';
 import { categories } from './data/categories';
 import { materials } from './data/materials';
 import { museums } from './data/museums';
+import type {
+  UserProfile,
+  AuthResponse,
+  LoginRequest,
+  RegisterRequest,
+  BrowseHistory,
+  CollectionGroup,
+  CollectionItem,
+  Comment,
+} from '@/types/user';
+import { defaultUsers, generateDefaultGroup, commentsStore } from './data/users';
 
 const delay = (ms: number): Promise<void> => 
   new Promise(resolve => setTimeout(resolve, ms));
@@ -421,5 +432,381 @@ function getRelation(a: Artifact, b: Artifact): string {
   if (a.museum === b.museum) relations.push('同一博物馆');
   return relations.length > 0 ? relations[0] : '相关文物';
 }
+
+// ===== 简单 MD5 哈希（用于密码验证） =====
+function simpleHash(str: string): string {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash |= 0;
+  }
+  return Math.abs(hash).toString(16);
+}
+
+// ===== 内部存储类型 =====
+interface StoredUser extends UserProfile {
+  passwordHash: string;
+  updatedAt: string;
+}
+
+// ===== 内存中的用户数据存储 =====
+const usersStore: Map<string, StoredUser> = new Map();
+
+// 初始化预设用户
+defaultUsers.forEach((user) => {
+  usersStore.set(user.id, {
+    id: user.id,
+    username: user.username,
+    email: user.email,
+    passwordHash: user.passwordHash,
+    avatar: user.avatar,
+    nickname: user.nickname,
+    bio: user.bio,
+    createdAt: user.createdAt,
+    updatedAt: user.updatedAt,
+  });
+});
+
+// 用户名到ID的索引
+const usernameIndex: Map<string, string> = new Map();
+defaultUsers.forEach((user) => {
+  usernameIndex.set(user.username, user.id);
+});
+
+// 邮箱到ID的索引
+const emailIndex: Map<string, string> = new Map();
+defaultUsers.forEach((user) => {
+  emailIndex.set(user.email.toLowerCase(), user.id);
+});
+
+// 内存中的浏览记录
+const browseHistoryStore: Map<string, BrowseHistory[]> = new Map();
+
+// 内存中的收藏分组
+const collectionGroupsStore: Map<string, CollectionGroup[]> = new Map();
+
+// 内存中的收藏项
+const collectionItemsStore: Map<string, CollectionItem[]> = new Map();
+
+// 为用户初始化默认分组
+function ensureDefaultGroup(userId: string): void {
+  if (!collectionGroupsStore.has(userId)) {
+    collectionGroupsStore.set(userId, [generateDefaultGroup(userId)]);
+  }
+  if (!collectionItemsStore.has(userId)) {
+    collectionItemsStore.set(userId, []);
+  }
+  if (!browseHistoryStore.has(userId)) {
+    browseHistoryStore.set(userId, []);
+  }
+}
+
+// 生成UUID
+function generateId(): string {
+  return Date.now().toString(36) + Math.random().toString(36).substring(2, 10);
+}
+
+// ===== userApi（用户个人信息管理模块）=====
+export const userApi = {
+  /**
+   * 用户登录
+   */
+  login: async (request: LoginRequest): Promise<AuthResponse> => {
+    await delay(Math.random() * 300 + 200);
+
+    // 通过用户名或邮箱查找用户
+    let userId = usernameIndex.get(request.username);
+    if (!userId) {
+      // 尝试通过邮箱查找
+      const emailLower = request.username.toLowerCase();
+      for (const [email, id] of emailIndex) {
+        if (email === emailLower) {
+          userId = id;
+          break;
+        }
+      }
+    }
+
+    if (!userId) {
+      return {
+        code: 401,
+        message: '用户名或密码错误',
+        data: { token: '', user: null as unknown as UserProfile },
+      };
+    }
+
+    const user = usersStore.get(userId);
+    if (!user) {
+      return {
+        code: 401,
+        message: '用户名或密码错误',
+        data: { token: '', user: null as unknown as UserProfile },
+      };
+    }
+
+    const inputHash = simpleHash(request.password);
+    // 比对密码（同时支持预设的 MD5 和我们的 simpleHash）
+    const isValid =
+      inputHash === user.passwordHash ||
+      (request.password === '123456' && user.passwordHash === 'e10adc3949ba59abbe56e057f20f883e');
+
+    if (!isValid) {
+      return {
+        code: 401,
+        message: '用户名或密码错误',
+        data: { token: '', user: null as unknown as UserProfile },
+      };
+    }
+
+    // 生成 token
+    const token = `token_${generateId()}_${userId}`;
+
+    const userProfile: UserProfile = {
+      id: user.id,
+      username: user.username,
+      email: user.email,
+      avatar: user.avatar,
+      nickname: user.nickname,
+      bio: user.bio,
+      createdAt: user.createdAt,
+    };
+
+    ensureDefaultGroup(userId);
+
+    return {
+      code: 200,
+      message: '登录成功',
+      data: { token, user: userProfile },
+    };
+  },
+
+  /**
+   * 用户注册
+   */
+  register: async (request: RegisterRequest): Promise<AuthResponse> => {
+    await delay(Math.random() * 300 + 200);
+
+    // 检查用户名是否已存在
+    if (usernameIndex.has(request.username)) {
+      return {
+        code: 409,
+        message: '用户名已存在',
+        data: { token: '', user: null as unknown as UserProfile },
+      };
+    }
+
+    // 检查邮箱是否已存在
+    if (emailIndex.has(request.email.toLowerCase())) {
+      return {
+        code: 409,
+        message: '该邮箱已被注册',
+        data: { token: '', user: null as unknown as UserProfile },
+      };
+    }
+
+    // 验证输入
+    if (request.username.length < 3 || request.username.length > 20) {
+      return {
+        code: 400,
+        message: '用户名长度应为3-20个字符',
+        data: { token: '', user: null as unknown as UserProfile },
+      };
+    }
+
+    if (request.password.length < 6) {
+      return {
+        code: 400,
+        message: '密码长度不能少于6位',
+        data: { token: '', user: null as unknown as UserProfile },
+      };
+    }
+
+    const userId = `user_${generateId()}`;
+    const now = new Date().toISOString();
+
+    const newUser = {
+      id: userId,
+      username: request.username,
+      email: request.email,
+      passwordHash: simpleHash(request.password),
+      avatar: '',
+      nickname: request.nickname || request.username,
+      bio: '',
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    usersStore.set(userId, newUser);
+    usernameIndex.set(request.username, userId);
+    emailIndex.set(request.email.toLowerCase(), userId);
+
+    const token = `token_${generateId()}_${userId}`;
+
+    const userProfile: UserProfile = {
+      id: userId,
+      username: newUser.username,
+      email: newUser.email,
+      avatar: newUser.avatar,
+      nickname: newUser.nickname,
+      bio: newUser.bio,
+      createdAt: newUser.createdAt,
+    };
+
+    ensureDefaultGroup(userId);
+
+    return {
+      code: 200,
+      message: '注册成功',
+      data: { token, user: userProfile },
+    };
+  },
+
+  /**
+   * 更新个人资料
+   */
+  updateProfile: async (userId: string, data: Partial<UserProfile>): Promise<UserProfile> => {
+    await delay(Math.random() * 150 + 50);
+
+    const user = usersStore.get(userId);
+    if (!user) {
+      throw new Error('用户不存在');
+    }
+
+    const updated: StoredUser = {
+      ...user,
+      ...data,
+      updatedAt: new Date().toISOString(),
+    };
+
+    usersStore.set(userId, updated);
+
+    return {
+      id: updated.id,
+      username: updated.username,
+      email: updated.email,
+      avatar: updated.avatar,
+      nickname: updated.nickname,
+      bio: updated.bio,
+      createdAt: updated.createdAt,
+    };
+  },
+
+  /**
+   * 修改密码
+   */
+  changePassword: async (_oldPassword: string, _newPassword: string): Promise<boolean> => {
+    await delay(Math.random() * 100 + 50);
+    return true; // 在 Mock 中始终返回成功
+  },
+
+  /**
+   * 获取浏览记录
+   */
+  getBrowseHistory: async (userId: string): Promise<BrowseHistory[]> => {
+    await delay(Math.random() * 100 + 30);
+    ensureDefaultGroup(userId);
+    return browseHistoryStore.get(userId) || [];
+  },
+
+  /**
+   * 获取收藏分组
+   */
+  getCollectionGroups: async (userId: string): Promise<CollectionGroup[]> => {
+    await delay(Math.random() * 100 + 30);
+    ensureDefaultGroup(userId);
+    return collectionGroupsStore.get(userId) || [];
+  },
+
+  /**
+   * 创建收藏分组
+   */
+  createCollectionGroup: async (
+    userId: string,
+    name: string,
+    description: string
+  ): Promise<CollectionGroup> => {
+    await delay(Math.random() * 80 + 20);
+    ensureDefaultGroup(userId);
+
+    const group: CollectionGroup = {
+      id: `group_${generateId()}`,
+      name,
+      description,
+      createdAt: new Date().toISOString(),
+    };
+
+    const groups = collectionGroupsStore.get(userId) || [];
+    groups.push(group);
+    collectionGroupsStore.set(userId, groups);
+
+    return group;
+  },
+
+  /**
+   * 删除收藏分组
+   */
+  deleteCollectionGroup: async (groupId: string): Promise<void> => {
+    await delay(Math.random() * 60 + 20);
+
+    for (const [userId, groups] of collectionGroupsStore) {
+      const filtered = groups.filter((g) => g.id !== groupId);
+      if (filtered.length !== groups.length) {
+        collectionGroupsStore.set(userId, filtered);
+        // 同时删除该分组下的收藏项
+        const items = collectionItemsStore.get(userId) || [];
+        collectionItemsStore.set(
+          userId,
+          items.filter((item) => item.groupId !== groupId)
+        );
+        break;
+      }
+    }
+  },
+
+  /**
+   * 更新收藏分组
+   */
+  updateCollectionGroup: async (
+    groupId: string,
+    name: string,
+    description: string
+  ): Promise<CollectionGroup> => {
+    await delay(Math.random() * 60 + 20);
+
+    for (const [, groups] of collectionGroupsStore) {
+      const group = groups.find((g) => g.id === groupId);
+      if (group) {
+        group.name = name;
+        group.description = description;
+        return group;
+      }
+    }
+
+    throw new Error('分组不存在');
+  },
+
+  /**
+   * 获取收藏项
+   */
+  getCollectionItems: async (userId: string, groupId?: string): Promise<CollectionItem[]> => {
+    await delay(Math.random() * 100 + 30);
+    ensureDefaultGroup(userId);
+
+    const items = collectionItemsStore.get(userId) || [];
+    if (groupId) {
+      return items.filter((item) => item.groupId === groupId);
+    }
+    return items;
+  },
+
+  /**
+   * 获取评论
+   */
+  getComments: async (artifactId: string): Promise<Comment[]> => {
+    await delay(Math.random() * 100 + 30);
+    return commentsStore.filter((c) => c.artifactId === artifactId);
+  },
+};
 
 export default mockApi;

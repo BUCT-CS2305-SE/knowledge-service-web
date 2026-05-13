@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { Landmark, Search, Menu, X } from 'lucide-react';
+import { Landmark, Search, Menu, X, User, ChevronDown, LogOut, Settings, Heart, Clock } from 'lucide-react';
+import { useUserStore } from '@/store/userStore';
 
 interface HeaderProps {
   onMenuToggle?: () => void;
@@ -9,6 +10,8 @@ interface HeaderProps {
 
 export const Header: React.FC<HeaderProps> = ({ onMenuToggle, isMenuOpen }) => {
   const location = useLocation();
+  const { currentUser, isAuthenticated, logout } = useUserStore();
+  const [showUserMenu, setShowUserMenu] = useState<boolean>(false);
 
   const navLinks = [
     { path: '/', label: '首页' },
@@ -18,6 +21,11 @@ export const Header: React.FC<HeaderProps> = ({ onMenuToggle, isMenuOpen }) => {
   const isActive = (path: string): boolean => {
     if (path === '/') return location.pathname === '/';
     return location.pathname.startsWith(path);
+  };
+
+  const handleLogout = (): void => {
+    setShowUserMenu(false);
+    logout();
   };
 
   return (
@@ -53,15 +61,110 @@ export const Header: React.FC<HeaderProps> = ({ onMenuToggle, isMenuOpen }) => {
           {/* Right Section */}
           <div className="flex items-center space-x-4">
             {/* Search Button */}
-            <button 
+            <Link
+              to="/search"
               className="p-2 rounded-lg hover:bg-museum-darker transition-colors"
               aria-label="搜索"
             >
               <Search className="h-5 w-5" />
-            </button>
+            </Link>
+
+            {/* 用户区域 */}
+            {isAuthenticated && currentUser ? (
+              <div className="relative">
+                <button
+                  onClick={() => setShowUserMenu(!showUserMenu)}
+                  className="flex items-center space-x-2 p-1.5 rounded-lg hover:bg-museum-darker transition-colors"
+                >
+                  {/* 头像 */}
+                  {currentUser.avatar ? (
+                    <img
+                      src={currentUser.avatar}
+                      alt="头像"
+                      className="w-8 h-8 rounded-full object-cover border border-white/20"
+                    />
+                  ) : (
+                    <div className="w-8 h-8 rounded-full bg-museum-gold/20 border border-white/20 flex items-center justify-center">
+                      <User className="h-4 w-4 text-museum-gold" />
+                    </div>
+                  )}
+                  <span className="hidden lg:block text-sm text-gray-200">
+                    {currentUser.nickname || currentUser.username}
+                  </span>
+                  <ChevronDown className="h-4 w-4 text-gray-400 hidden lg:block" />
+                </button>
+
+                {/* 下拉菜单 */}
+                {showUserMenu && (
+                  <>
+                    {/* 点击外部关闭 */}
+                    <div
+                      className="fixed inset-0 z-40"
+                      onClick={() => setShowUserMenu(false)}
+                    />
+                    <div className="absolute right-0 top-full mt-2 w-56 bg-white rounded-lg shadow-xl border border-gray-200 z-50 overflow-hidden">
+                      {/* 用户信息 */}
+                      <div className="p-4 bg-gray-50 border-b border-gray-100">
+                        <p className="text-sm font-semibold text-gray-800">
+                          {currentUser.nickname || currentUser.username}
+                        </p>
+                        <p className="text-xs text-gray-500 mt-0.5">{currentUser.email}</p>
+                      </div>
+
+                      {/* 菜单项 */}
+                      <div className="py-1">
+                        <Link
+                          to="/profile"
+                          onClick={() => setShowUserMenu(false)}
+                          className="flex items-center px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors"
+                        >
+                          <Settings className="h-4 w-4 mr-3 text-gray-400" />
+                          个人中心
+                        </Link>
+                        <Link
+                          to="/collections"
+                          onClick={() => setShowUserMenu(false)}
+                          className="flex items-center px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors"
+                        >
+                          <Heart className="h-4 w-4 mr-3 text-gray-400" />
+                          我的收藏
+                        </Link>
+                        <Link
+                          to="/history"
+                          onClick={() => setShowUserMenu(false)}
+                          className="flex items-center px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors"
+                        >
+                          <Clock className="h-4 w-4 mr-3 text-gray-400" />
+                          浏览记录
+                        </Link>
+                      </div>
+
+                      {/* 退出登录 */}
+                      <div className="border-t border-gray-100 py-1">
+                        <button
+                          onClick={handleLogout}
+                          className="flex items-center w-full px-4 py-2.5 text-sm text-red-600 hover:bg-red-50 transition-colors"
+                        >
+                          <LogOut className="h-4 w-4 mr-3" />
+                          退出登录
+                        </button>
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+            ) : (
+              <Link
+                to="/login"
+                className="hidden md:flex items-center space-x-1.5 px-3 py-1.5 rounded-lg bg-museum-gold/10 border border-museum-gold/30 text-museum-gold text-sm font-medium hover:bg-museum-gold/20 transition-colors"
+              >
+                <User className="h-4 w-4" />
+                <span>登录</span>
+              </Link>
+            )}
 
             {/* Mobile Menu Toggle */}
-            <button 
+            <button
               onClick={onMenuToggle}
               className="md:hidden p-2 rounded-lg hover:bg-museum-darker transition-colors"
               aria-label="菜单"
@@ -89,6 +192,52 @@ export const Header: React.FC<HeaderProps> = ({ onMenuToggle, isMenuOpen }) => {
                   {link.label}
                 </Link>
               ))}
+
+              {/* 移动端：登录/用户入口 */}
+              <div className="border-t border-gray-700 pt-2 mt-2">
+                {isAuthenticated && currentUser ? (
+                  <>
+                    <Link
+                      to="/profile"
+                      onClick={onMenuToggle}
+                      className="block px-4 py-2 rounded-lg text-sm font-medium text-gray-300 hover:bg-museum-darker"
+                    >
+                      个人中心
+                    </Link>
+                    <Link
+                      to="/collections"
+                      onClick={onMenuToggle}
+                      className="block px-4 py-2 rounded-lg text-sm font-medium text-gray-300 hover:bg-museum-darker"
+                    >
+                      我的收藏
+                    </Link>
+                    <Link
+                      to="/history"
+                      onClick={onMenuToggle}
+                      className="block px-4 py-2 rounded-lg text-sm font-medium text-gray-300 hover:bg-museum-darker"
+                    >
+                      浏览记录
+                    </Link>
+                    <button
+                      onClick={() => {
+                        onMenuToggle?.();
+                        logout();
+                      }}
+                      className="block w-full text-left px-4 py-2 rounded-lg text-sm font-medium text-red-400 hover:bg-museum-darker"
+                    >
+                      退出登录
+                    </button>
+                  </>
+                ) : (
+                  <Link
+                    to="/login"
+                    onClick={onMenuToggle}
+                    className="block px-4 py-2 rounded-lg text-sm font-medium text-museum-gold hover:bg-museum-darker"
+                  >
+                    登录 / 注册
+                  </Link>
+                )}
+              </div>
             </div>
           </nav>
         )}

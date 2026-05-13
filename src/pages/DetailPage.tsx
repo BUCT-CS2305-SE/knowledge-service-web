@@ -1,18 +1,22 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { 
-  ArrowLeft, MapPin, Calendar, Gem, Landmark as LandmarkIcon, 
+import {
+  ArrowLeft, MapPin, Calendar, Gem, Landmark as LandmarkIcon,
   ExternalLink, Share2, Heart, Plus, Check,
-  Network, GitBranch
+  Network, GitBranch, MessageCircle, ThumbsUp, Send,
+  LogIn
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Input } from '@/components/ui/input';
 import { ArtifactCard } from '@/components/artifacts/ArtifactCard';
 import { mockApi } from '@/mock/handlers';
+import { useUserStore } from '@/store/userStore';
 import { useArtifactStore } from '@/store/artifactStore';
 import type { Artifact } from '@/types/artifact';
+import type { Comment as CommentType, Reply } from '@/types/user';
 
 interface TripleRelation {
   subject: string;
@@ -28,9 +32,26 @@ export const DetailPage: React.FC = () => {
   const [loading, setLoading] = useState<boolean>(true);
   const [selectedImageIndex, setSelectedImageIndex] = useState<number>(0);
   const [imageZoomed, setImageZoomed] = useState<boolean>(false);
+  const [commentText, setCommentText] = useState<string>('');
+  const [replyText, setReplyText] = useState<Record<string, string>>({});
+  const [showReplies, setShowReplies] = useState<Record<string, boolean>>({});
+  const [commentSubmitting, setCommentSubmitting] = useState<boolean>(false);
 
   const { addToCompare, removeFromCompare, isInCompare } = useArtifactStore();
+  const {
+    isAuthenticated,
+    currentUser,
+    isArtifactCollected,
+    toggleCollectArtifact,
+    addBrowseHistory,
+    comments,
+    fetchComments,
+    addComment,
+    addReply,
+    likeComment,
+  } = useUserStore();
   const inCompare = id ? isInCompare(id) : false;
+  const isCollected = id ? isArtifactCollected(id) : false;
 
   // Generate knowledge graph triples for the artifact
   const generateTriples = (art: Artifact): TripleRelation[] => {
@@ -79,6 +100,19 @@ export const DetailPage: React.FC = () => {
 
         setArtifact(artifactData);
         setRecommendations(recommendationsData);
+
+        // 记录浏览历史
+        if (artifactData && isAuthenticated) {
+          addBrowseHistory(
+            artifactData.id,
+            artifactData.name,
+            artifactData.images[0] || '',
+            artifactData.category
+          );
+        }
+
+        // 加载评论
+        await fetchComments(id);
       } catch (error) {
         console.error('Failed to load artifact details:', error);
       } finally {
@@ -144,6 +178,55 @@ export const DetailPage: React.FC = () => {
       removeFromCompare(id);
     } else {
       addToCompare(artifact);
+    }
+  };
+
+  const handleCollectToggle = (): void => {
+    if (!id || !artifact) return;
+    if (!isAuthenticated) {
+      // 未登录，跳转到登录页
+      window.location.href = '/login';
+      return;
+    }
+    toggleCollectArtifact(
+      artifact.id,
+      artifact.name,
+      artifact.images[0] || '',
+      artifact.category,
+      artifact.era,
+      artifact.region
+    );
+  };
+
+  const handleAddComment = async (): Promise<void> => {
+    if (!id || !commentText.trim() || !isAuthenticated) return;
+    setCommentSubmitting(true);
+    addComment({ artifactId: id, content: commentText.trim() });
+    setCommentText('');
+    setCommentSubmitting(false);
+  };
+
+  const handleAddReply = async (commentId: string): Promise<void> => {
+    const text = replyText[commentId]?.trim();
+    if (!id || !text || !isAuthenticated) return;
+    addReply({ commentId, content: text });
+    setReplyText((prev) => ({ ...prev, [commentId]: '' }));
+  };
+
+  const artifactComments: CommentType[] = id ? (comments[id] || []) : [];
+
+  const formatCommentTime = (timestamp: string): string => {
+    try {
+      const date = new Date(timestamp);
+      return date.toLocaleDateString('zh-CN', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+    } catch {
+      return timestamp;
     }
   };
 
@@ -272,11 +355,25 @@ export const DetailPage: React.FC = () => {
 
           {/* Action Buttons */}
           <div className="flex flex-wrap gap-3">
-            <Button variant="outline" size="sm" className="gap-2">
-              <Heart className="h-4 w-4" />
-              收藏
+            <Button
+              variant={isCollected ? "default" : "outline"}
+              size="sm"
+              onClick={handleCollectToggle}
+              className={`gap-2 ${
+                isCollected
+                  ? 'bg-red-500 hover:bg-red-600 text-white'
+                  : 'hover:border-red-300 hover:text-red-500'
+              }`}
+            >
+              <Heart className={`h-4 w-4 ${isCollected ? 'fill-current' : ''}`} />
+              {isCollected ? '已收藏' : '收藏'}
             </Button>
-            <Button variant="outline" size="sm" className="gap-2">
+            <Button variant="outline" size="sm" className="gap-2" onClick={() => {
+              if (id) {
+                navigator.clipboard.writeText(window.location.href).catch(() => {});
+                alert('链接已复制到剪贴板');
+              }
+            }}>
               <Share2 className="h-4 w-4" />
               分享
             </Button>
@@ -439,6 +536,184 @@ export const DetailPage: React.FC = () => {
                 </Badge>
               ))}
             </div>
+          </div>
+
+          {/* Comments Section */}
+          <div className="pt-6 border-t border-gray-200">
+            <h3 className="text-lg font-bold text-gray-900 mb-4 flex items-center gap-2">
+              <MessageCircle className="h-5 w-5 text-museum-gold" />
+              评论 ({artifactComments.length})
+            </h3>
+
+            {/* Comment Input */}
+            {isAuthenticated ? (
+              <div className="flex gap-3 mb-6">
+                <div className="w-9 h-9 rounded-full bg-museum-gold/20 flex items-center justify-center flex-shrink-0">
+                  <span className="text-sm font-semibold text-museum-gold-dark">
+                    {(currentUser?.nickname || currentUser?.username || '?')[0]}
+                  </span>
+                </div>
+                <div className="flex-1">
+                  <div className="flex gap-2">
+                    <Input
+                      placeholder="写下你的评论..."
+                      value={commentText}
+                      onChange={(e) => setCommentText(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault();
+                          handleAddComment();
+                        }
+                      }}
+                      className="flex-1"
+                      disabled={commentSubmitting}
+                    />
+                    <Button
+                      size="sm"
+                      onClick={handleAddComment}
+                      disabled={!commentText.trim() || commentSubmitting}
+                      className="bg-museum-gold hover:bg-museum-gold-dark text-white"
+                    >
+                      <Send className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="mb-6 p-4 bg-gray-50 rounded-lg text-center">
+                <p className="text-sm text-gray-500 mb-2">登录后即可发表评论</p>
+                <Link to="/login">
+                  <Button size="sm" variant="outline" className="gap-2">
+                    <LogIn className="h-4 w-4" />
+                    立即登录
+                  </Button>
+                </Link>
+              </div>
+            )}
+
+            {/* Comment List */}
+            {artifactComments.length > 0 ? (
+              <div className="space-y-4">
+                {artifactComments.map((comment) => (
+                  <div key={comment.id} className="flex gap-3">
+                    {/* Avatar */}
+                    <div className="w-8 h-8 rounded-full bg-museum-gold/20 flex items-center justify-center flex-shrink-0 mt-0.5">
+                      <span className="text-xs font-semibold text-museum-gold-dark">
+                        {(comment.username || '?')[0]}
+                      </span>
+                    </div>
+
+                    <div className="flex-1 min-w-0">
+                      {/* Header */}
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-sm font-medium text-gray-800">
+                          {comment.username}
+                        </span>
+                        <span className="text-xs text-gray-400">
+                          {formatCommentTime(comment.createdAt)}
+                        </span>
+                      </div>
+
+                      {/* Content */}
+                      <p className="text-sm text-gray-700 mb-2 leading-relaxed">
+                        {comment.content}
+                      </p>
+
+                      {/* Actions */}
+                      <div className="flex items-center gap-3">
+                        <button
+                          onClick={() => likeComment(comment.id)}
+                          className={`inline-flex items-center gap-1 text-xs transition-colors ${
+                            currentUser && comment.likedBy.includes(currentUser.id)
+                              ? 'text-museum-gold'
+                              : 'text-gray-400 hover:text-museum-gold'
+                          }`}
+                        >
+                          <ThumbsUp className="h-3.5 w-3.5" />
+                          {comment.likes > 0 && <span>{comment.likes}</span>}
+                        </button>
+                        <button
+                          onClick={() =>
+                            setShowReplies((prev) => ({
+                              ...prev,
+                              [comment.id]: !prev[comment.id],
+                            }))
+                          }
+                          className="text-xs text-gray-400 hover:text-blue-500 transition-colors"
+                        >
+                          {comment.replies.length > 0
+                            ? `${comment.replies.length} 条回复`
+                            : '回复'}
+                        </button>
+                      </div>
+
+                      {/* Reply Input */}
+                      {showReplies[comment.id] && (
+                        <div className="mt-3 space-y-3">
+                          {/* Existing Replies */}
+                          {comment.replies.map((reply: Reply) => (
+                            <div key={reply.id} className="flex gap-2 pl-2">
+                              <div className="w-6 h-6 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
+                                <span className="text-xs text-blue-600">
+                                  {(reply.username || '?')[0]}
+                                </span>
+                              </div>
+                              <div>
+                                <div className="flex items-center gap-2">
+                                  <span className="text-xs font-medium text-gray-700">
+                                    {reply.username}
+                                  </span>
+                                  <span className="text-xs text-gray-400">
+                                    {formatCommentTime(reply.createdAt)}
+                                  </span>
+                                </div>
+                                <p className="text-xs text-gray-600 mt-0.5">{reply.content}</p>
+                              </div>
+                            </div>
+                          ))}
+
+                          {/* Reply Form */}
+                          {isAuthenticated && (
+                            <div className="flex gap-2 items-center">
+                              <Input
+                                placeholder="写下回复..."
+                                value={replyText[comment.id] || ''}
+                                onChange={(e) =>
+                                  setReplyText((prev) => ({
+                                    ...prev,
+                                    [comment.id]: e.target.value,
+                                  }))
+                                }
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter' && !e.shiftKey) {
+                                    e.preventDefault();
+                                    handleAddReply(comment.id);
+                                  }
+                                }}
+                                className="flex-1 text-sm h-8"
+                              />
+                              <Button
+                                size="sm"
+                                onClick={() => handleAddReply(comment.id)}
+                                disabled={!replyText[comment.id]?.trim()}
+                                className="h-8 bg-museum-gold hover:bg-museum-gold-dark text-white"
+                              >
+                                <Send className="h-3 w-3" />
+                              </Button>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-center py-8 text-gray-400">
+                <MessageCircle className="h-10 w-10 mx-auto mb-2 opacity-30" />
+                <p className="text-sm">暂无评论，来发表第一条评论吧</p>
+              </div>
+            )}
           </div>
         </div>
       </div>

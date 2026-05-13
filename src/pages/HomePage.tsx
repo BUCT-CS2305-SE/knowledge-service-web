@@ -1,14 +1,19 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowRight, Landmark, BookOpen, Globe, Sparkles } from 'lucide-react';
+import { ArrowRight, Landmark, BookOpen, Globe, Sparkles, TrendingUp, Heart } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ArtifactCard } from '@/components/artifacts/ArtifactCard';
 import { mockApi } from '@/mock/handlers';
+import { useUserStore } from '@/store/userStore';
 import type { Artifact } from '@/types/artifact';
 
 export const HomePage: React.FC = () => {
   const [featuredArtifacts, setFeaturedArtifacts] = useState<Artifact[]>([]);
+  const [recommendedArtifacts, setRecommendedArtifacts] = useState<Artifact[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
+  const [loadingRecommendations, setLoadingRecommendations] = useState<boolean>(false);
+
+  const { isAuthenticated, browseHistory, collectionItems } = useUserStore();
 
   useEffect(() => {
     const loadFeatured = async (): Promise<void> => {
@@ -28,6 +33,49 @@ export const HomePage: React.FC = () => {
 
     loadFeatured();
   }, []);
+
+  // 个性化推荐：基于浏览记录和收藏记录
+  useEffect(() => {
+    const loadRecommendations = async (): Promise<void> => {
+      if (!isAuthenticated) return;
+
+      try {
+        setLoadingRecommendations(true);
+
+        // 收集用户兴趣类别
+        const interestCategories = new Set<string>();
+        browseHistory.forEach((h) => interestCategories.add(h.artifactCategory));
+        collectionItems.forEach((item) => interestCategories.add(item.artifactCategory));
+
+        if (interestCategories.size === 0) {
+          setLoadingRecommendations(false);
+          return;
+        }
+
+        // 获取所有文物，筛选匹配用户兴趣的
+        const response = await mockApi.getArtifacts({ page: 1, size: 50 });
+        const allArtifacts = response.data;
+
+        // 过滤掉已浏览和已收藏的文物
+        const browsedIds = new Set(browseHistory.map((h) => h.artifactId));
+        const collectedIds = new Set(collectionItems.map((item) => item.artifactId));
+        const seenIds = new Set([...browsedIds, ...collectedIds]);
+
+        const recommendations = allArtifacts
+          .filter((artifact) => interestCategories.has(artifact.category))
+          .filter((artifact) => !seenIds.has(artifact.id))
+          .slice(0, 4);
+
+        setRecommendedArtifacts(recommendations);
+      } catch (error) {
+        console.error('Failed to load recommendations:', error);
+      } finally {
+        setLoadingRecommendations(false);
+      }
+    };
+
+    loadRecommendations();
+  }, [isAuthenticated, browseHistory, collectionItems]);
 
   return (
     <div className="min-h-screen">
@@ -183,6 +231,72 @@ export const HomePage: React.FC = () => {
           )}
         </div>
       </section>
+
+      {/* Personalized Recommendations Section */}
+      {isAuthenticated && (
+        <section className="py-16 md:py-24 bg-white">
+          <div className="museum-container">
+            <div className="flex justify-between items-end mb-12">
+              <div>
+                <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mb-4 flex items-center gap-3">
+                  <TrendingUp className="h-8 w-8 text-museum-gold" />
+                  猜你喜欢
+                </h2>
+                <p className="text-lg text-gray-600">
+                  基于你的浏览和收藏记录，为你推荐这些文物
+                </p>
+              </div>
+              <Link to="/browse" className="hidden md:block">
+                <Button variant="outline" className="border-museum-gold text-museum-gold-dark hover:bg-museum-gold hover:text-white">
+                  更多推荐
+                  <ArrowRight className="ml-2 h-4 w-4" />
+                </Button>
+              </Link>
+            </div>
+
+            {loadingRecommendations ? (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+                {Array.from({ length: 4 }).map((_, i) => (
+                  <div key={i} className="bg-museum-cream-light rounded-lg shadow-md overflow-hidden animate-pulse">
+                    <div className="aspect-[4/3] bg-gray-200"></div>
+                    <div className="p-5 space-y-3">
+                      <div className="h-6 bg-gray-200 rounded w-3/4"></div>
+                      <div className="h-4 bg-gray-200 rounded w-1/2"></div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : recommendedArtifacts.length > 0 ? (
+              <>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+                  {recommendedArtifacts.map((artifact) => (
+                    <ArtifactCard key={artifact.id} artifact={artifact} />
+                  ))}
+                </div>
+                <div className="text-center md:hidden">
+                  <Link to="/browse">
+                    <Button variant="outline" className="border-museum-gold text-museum-gold-dark hover:bg-museum-gold hover:text-white w-full sm:w-auto">
+                      更多推荐
+                      <ArrowRight className="ml-2 h-4 w-4" />
+                    </Button>
+                  </Link>
+                </div>
+              </>
+            ) : (
+              <div className="text-center py-12 bg-museum-cream-light rounded-xl">
+                <Heart className="h-12 w-12 text-gray-300 mx-auto mb-4" />
+                <p className="text-gray-500 mb-2">浏览更多文物，我们会为你推荐感兴趣的藏品</p>
+                <Link to="/browse">
+                  <Button className="bg-museum-gold hover:bg-museum-gold-dark text-white mt-3">
+                    开始探索
+                    <ArrowRight className="ml-2 h-4 w-4" />
+                  </Button>
+                </Link>
+              </div>
+            )}
+          </div>
+        </section>
+      )}
 
       {/* CTA Section */}
       <section className="py-20 bg-museum-dark text-white">
