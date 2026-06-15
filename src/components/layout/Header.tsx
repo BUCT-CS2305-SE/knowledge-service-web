@@ -16,7 +16,7 @@ export const Header: React.FC<HeaderProps> = ({ onMenuToggle, isMenuOpen }) => {
   // 构造知识问答子系统跳转 URL，附带 token 供对方存入 localStorage
   const qaUrl = (() => {
     const token = localStorage.getItem('auth_token');
-    const base = 'http://10.4.163.140:5173/';
+    const base = 'https://qa-culturerelic.xyz/';
     if (token) {
       return `${base}?token=${encodeURIComponent(token)}`;
     }
@@ -75,16 +75,27 @@ export const Header: React.FC<HeaderProps> = ({ onMenuToggle, isMenuOpen }) => {
           {/* Right Section */}
           <div className="flex items-center space-x-4">
             {/* 知识问答子系统入口 */}
-            <a
-              href={qaUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="hidden md:flex items-center space-x-1.5 px-3 py-1.5 rounded-lg bg-museum-gold/10 border border-museum-gold/30 text-museum-gold text-sm font-medium hover:bg-museum-gold/20 transition-colors"
-              aria-label="知识问答"
-            >
-              <MessageCircle className="h-4 w-4" />
-              <span>知识问答</span>
-            </a>
+            {isAuthenticated ? (
+              <a
+                href={qaUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="hidden md:flex items-center space-x-1.5 px-3 py-1.5 rounded-lg bg-museum-gold/10 border border-museum-gold/30 text-museum-gold text-sm font-medium hover:bg-museum-gold/20 transition-colors"
+                aria-label="知识问答"
+              >
+                <MessageCircle className="h-4 w-4" />
+                <span>知识问答</span>
+              </a>
+            ) : (
+              <span
+                className="hidden md:flex items-center space-x-1.5 px-3 py-1.5 rounded-lg bg-museum-gold/10 border border-museum-gold/30 text-museum-gold/40 text-sm font-medium cursor-not-allowed"
+                aria-label="知识问答（请先登录）"
+                title="请先登录后使用知识问答"
+              >
+                <MessageCircle className="h-4 w-4" />
+                <span>知识问答</span>
+              </span>
+            )}
 
             {/* Search Button */}
             <Link
@@ -220,15 +231,25 @@ export const Header: React.FC<HeaderProps> = ({ onMenuToggle, isMenuOpen }) => {
               ))}
 
               {/* 移动端：知识问答子系统入口 */}
-              <a
-                href={qaUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                onClick={onMenuToggle}
-                className="block px-4 py-2 rounded-lg text-sm font-medium text-museum-gold hover:bg-museum-darker transition-colors"
-              >
-                知识问答
-              </a>
+              {isAuthenticated ? (
+                <a
+                  href={qaUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={onMenuToggle}
+                  className="block px-4 py-2 rounded-lg text-sm font-medium text-museum-gold hover:bg-museum-darker transition-colors"
+                >
+                  知识问答
+                </a>
+              ) : (
+                <span
+                  onClick={onMenuToggle}
+                  className="block px-4 py-2 rounded-lg text-sm font-medium text-museum-gold/40 cursor-not-allowed"
+                  title="请先登录后使用知识问答"
+                >
+                  知识问答
+                </span>
+              )}
 
               {/* 移动端：登录/用户入口 */}
               <div className="border-t border-gray-700 pt-2 mt-2">
